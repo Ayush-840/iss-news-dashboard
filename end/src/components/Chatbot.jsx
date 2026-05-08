@@ -1,16 +1,41 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Send, Trash2, MessageSquare } from 'lucide-react';
-import { HfInference } from '@huggingface/inference';
 
-const hf = new HfInference(import.meta.env.VITE_AI_TOKEN);
 const STORAGE_KEY = 'chatbot_messages';
+const MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2:featherless-ai";
 
 const SYSTEM_PROMPT = (issData, newsData) => `
 You are an AI assistant for the ISS & News Dashboard. Answer ONLY based on the data provided.
-ISS Data: Lat ${issData?.lat}, Lon ${issData?.lon}, Speed ${issData?.speed} km/h.
+ISS Data: Lat ${issData?.lat}, Lon ${issData?.lon}, Speed ${issData?.speed} km/h, Nearest: ${issData?.nearestPlace}.
 News Data: ${newsData?.length} articles loaded.
 Be concise.
 `;
+
+async function queryHF(messages) {
+  const token = import.meta.env.VITE_AI_TOKEN;
+  const response = await fetch(
+    "https://router.huggingface.co/v1/chat/completions",
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+      body: JSON.stringify({
+        messages,
+        model: MODEL_ID,
+        max_tokens: 200,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error?.message || `HTTP ${response.status}`);
+  }
+
+  return await response.json();
+}
 
 export default function Chatbot({ issData, newsData }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -31,25 +56,40 @@ export default function Chatbot({ issData, newsData }) {
     const text = input.trim();
     if (!text || isTyping) return;
 
-    setMessages(prev => [...prev, { role: 'user', content: text }]);
+    const newMessages = [
+      ...messages,
+      { role: 'user', content: text }
+    ];
+
+    setMessages(newMessages);
     setInput('');
     setIsTyping(true);
 
     try {
-      const response = await hf.chatCompletion({
-        model: 'mistralai/Mistral-7B-Instruct-v0.2',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT(issData, newsData) },
-          ...messages.slice(-4),
-          { role: 'user', content: text },
-        ],
-        max_tokens: 200,
-      });
+      // Clean history to ensure roles alternate user/assistant
+      let history = [...newMessages];
+      const cleanedHistory = [];
+      let lastRole = null;
 
-      const reply = response.choices?.[0]?.message?.content || "No response.";
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].role !== lastRole) {
+          cleanedHistory.unshift(history[i]);
+          lastRole = history[i].role;
+        }
+        if (cleanedHistory.length >= 6) break; // Limit history
+      }
+
+      const fullPrompt = [
+        { role: 'system', content: SYSTEM_PROMPT(issData, newsData) },
+        ...cleanedHistory
+      ];
+
+      const result = await queryHF(fullPrompt);
+      const reply = result.choices?.[0]?.message?.content || "No response.";
       setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Error connecting to AI.' }]);
+      console.error(err);
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Error connecting to AI Hub.' }]);
     } finally {
       setIsTyping(false);
     }
@@ -77,9 +117,8 @@ export default function Chatbot({ issData, newsData }) {
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.map((msg, i) => (
               <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-xs font-medium ${
-                  msg.role === 'user' ? 'bg-red-100 text-red-900' : 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200'
-                }`}>
+                <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-xs font-medium shadow-sm ${msg.role === 'user' ? 'bg-red-100 text-black' : 'bg-gray-100 dark:bg-gray-200 text-black'
+                  }`}>
                   {msg.content}
                 </div>
               </div>
@@ -96,7 +135,7 @@ export default function Chatbot({ issData, newsData }) {
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && sendMessage()}
                 placeholder="Ask from dashboard data only"
-                className="w-full pl-3 pr-10 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-2xl text-[11px] focus:outline-none"
+                className="w-full pl-3 pr-10 py-2 bg-gray-50 dark:bg-gray-100 border border-gray-100 dark:border-gray-300 rounded-2xl text-[11px] text-black focus:outline-none"
               />
               <button onClick={sendMessage} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-500 font-bold text-[10px]">Send</button>
             </div>
