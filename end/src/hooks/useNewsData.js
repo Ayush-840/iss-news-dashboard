@@ -20,25 +20,25 @@ export function useNewsData() {
     try {
       const apiKey = import.meta.env.VITE_NEWS_API_KEY;
       
-      // If there is a search query, use 'everything' endpoint
-      // If not, use 'top-headlines' with 'sources=bbc-news' as requested
+      // GNews API structure
       let apiUrl = '';
       if (searchQuery) {
-        apiUrl = `https://newsapi.org/v2/everything?q=${searchQuery}&sortBy=${sortBy}&apiKey=${apiKey}`;
+        apiUrl = `https://gnews.io/api/v4/search?q=${searchQuery}&lang=en&country=us&max=10&apikey=${apiKey}`;
       } else {
-        apiUrl = `https://newsapi.org/v2/top-headlines?sources=bbc-news&apiKey=${apiKey}`;
+        apiUrl = `https://gnews.io/api/v4/top-headlines?category=${category}&lang=en&country=us&max=10&apikey=${apiKey}`;
       }
 
       const { data } = await axios.get(apiUrl);
       
-      if (data.status === 'error') {
-        throw new Error(data.message || "News API Error");
+      if (data.errors) {
+        throw new Error(data.errors[0] || "GNews API Error");
       }
 
-      let articles = data.articles || [];
-      
-      // Basic cleaning: remove articles with [Removed] content
-      articles = articles.filter(a => a.title && a.title !== '[Removed]');
+      // Map GNews format to our existing UI format
+      const articles = (data.articles || []).map(article => ({
+        ...article,
+        urlToImage: article.image // GNews uses 'image' instead of 'urlToImage'
+      }));
 
       setNews(articles);
       
@@ -51,7 +51,7 @@ export function useNewsData() {
       }));
 
     } catch (err) {
-      console.error("News fetch failed:", err);
+      console.error("GNews fetch failed:", err);
       setError(err.message || "Failed to fetch news");
       
       // Load from cache if offline or error
@@ -69,17 +69,6 @@ export function useNewsData() {
   }, [searchQuery, sortBy, category]);
 
   useEffect(() => {
-    // Try to load from cache first
-    const cached = localStorage.getItem(CACHE_KEY);
-    if (cached) {
-      const { timestamp, data, query, cat } = JSON.parse(cached);
-      if (Date.now() - timestamp < CACHE_TIME && query === searchQuery && cat === category) {
-        setNews(data);
-        setIsLoading(false);
-        return;
-      }
-    }
-    
     fetchNews();
   }, [fetchNews, searchQuery, category]);
 
