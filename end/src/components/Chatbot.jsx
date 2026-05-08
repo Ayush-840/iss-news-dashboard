@@ -56,36 +56,32 @@ export default function Chatbot({ issData, newsData }) {
     const text = input.trim();
     if (!text || isTyping) return;
 
-    const newMessages = [
-      ...messages,
-      { role: 'user', content: text }
-    ];
+    // Only keep the most recent valid history with alternating roles
+    const filteredHistory = [];
+    let expectedRole = 'assistant'; // We are about to add a 'user' message, so last should be 'assistant'
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === expectedRole) {
+        filteredHistory.unshift(messages[i]);
+        expectedRole = expectedRole === 'assistant' ? 'user' : 'assistant';
+      }
+      if (filteredHistory.length >= 6) break;
+    }
 
+    const newUserMsg = { role: 'user', content: text };
+    const newMessages = [...messages, newUserMsg];
     setMessages(newMessages);
     setInput('');
     setIsTyping(true);
 
     try {
-      // Clean history to ensure roles alternate user/assistant
-      let history = [...newMessages];
-      const cleanedHistory = [];
-      let lastRole = null;
-
-      for (let i = history.length - 1; i >= 0; i--) {
-        if (history[i].role !== lastRole) {
-          cleanedHistory.unshift(history[i]);
-          lastRole = history[i].role;
-        }
-        if (cleanedHistory.length >= 6) break; // Limit history
-      }
-
       const fullPrompt = [
         { role: 'system', content: SYSTEM_PROMPT(issData, newsData) },
-        ...cleanedHistory
+        ...filteredHistory,
+        newUserMsg
       ];
 
       const result = await queryHF(fullPrompt);
-      const reply = result.choices?.[0]?.message?.content || "No response.";
+      const reply = result.choices?.[0]?.message?.content?.trim() || 'No response.';
       setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
     } catch (err) {
       console.error(err);
